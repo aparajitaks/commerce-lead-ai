@@ -102,7 +102,8 @@ app.post("/api/orders/:orderId/capture", async (req, res) => {
             });
         }
 
-        const capture = result.purchaseUnits?.[0]?.payments?.captures?.[0];
+        const purchaseUnits = result.purchase_units || result.purchaseUnits;
+        const capture = purchaseUnits?.[0]?.payments?.captures?.[0];
 
         if (capture?.status !== "COMPLETED" || !capture.id) {
             return res.status(409).json({
