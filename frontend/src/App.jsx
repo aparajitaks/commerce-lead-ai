@@ -191,6 +191,7 @@ function Checkout() {
 
 export default function App() {
   const clientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
+  const currency = import.meta.env.VITE_PAYPAL_CURRENCY || "USD";
 
   if (!clientId) {
     return (
@@ -204,7 +205,7 @@ export default function App() {
     <PayPalScriptProvider
       options={{
         clientId,
-        currency: "USD",
+        currency,
         intent: "capture",
       }}
     >

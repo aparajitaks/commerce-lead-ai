@@ -21,7 +21,7 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/orders", async (_req, res) => {
     try {
         const amount = "10.00";
-        const currency = "USD";
+        const currency = process.env.PAYPAL_CURRENCY || "USD";
 
         const localOrder = await prisma.paymentOrder.create({
             data: {
@@ -33,6 +33,20 @@ app.post("/api/orders", async (_req, res) => {
         });
 
         const paypalOrder = await createPayPalOrder();
+
+        console.log(
+            "PayPal order created:",
+            JSON.stringify({
+                id: paypalOrder.id,
+                status: paypalOrder.status,
+                intent: paypalOrder.intent,
+                links: paypalOrder.links?.map((link) => ({
+                    rel: link.rel,
+                    method: link.method,
+                    href: link.href,
+                })),
+            }, null, 2)
+        );
 
         if (!paypalOrder.id) {
             throw new Error("PayPal did not return an order ID");
