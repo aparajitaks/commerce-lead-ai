@@ -24,3 +24,6 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# ─── Local Documentation ──────────────────────────────────────────────────────
+IMPLEMENTATION_JOURNEY.md

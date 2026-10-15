@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 
 import prisma from "./lib/prisma.js";
+import products from "./data/products.js";
 import {
     createPayPalOrder,
     capturePayPalOrder,
@@ -18,21 +19,45 @@ app.get("/api/health", (_req, res) => {
 });
 
 // Create a local order and its corresponding PayPal order.
-app.post("/api/orders", async (_req, res) => {
+app.post("/api/orders", async (req, res) => {
     try {
-        const amount = "10.00";
+        const { items } = req.body;
         const currency = process.env.PAYPAL_CURRENCY || "USD";
+
+        let amount = "10.00";
+        let description = "Commerce Lead AI Sandbox Demo";
+
+        if (Array.isArray(items) && items.length > 0) {
+            let total = 0;
+            const itemSummaries = [];
+
+            for (const item of items) {
+                const product = products.find((p) => p.id === item.id);
+                if (!product) {
+                    return res.status(400).json({ error: `Unknown product ID: ${item.id}` });
+                }
+                const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+                total += product.price * qty;
+                itemSummaries.push(`${qty}x ${product.name}`);
+            }
+
+            amount = total.toFixed(2);
+            description = itemSummaries.join(", ");
+            if (description.length > 120) {
+                description = description.slice(0, 117) + "...";
+            }
+        }
 
         const localOrder = await prisma.paymentOrder.create({
             data: {
                 amount,
                 currency,
-                description: "Commerce Lead AI Sandbox Demo",
+                description,
                 status: "PENDING",
             },
         });
 
-        const paypalOrder = await createPayPalOrder();
+        const paypalOrder = await createPayPalOrder(amount, description);
 
         console.log(
             "PayPal order created:",
@@ -40,6 +65,8 @@ app.post("/api/orders", async (_req, res) => {
                 id: paypalOrder.id,
                 status: paypalOrder.status,
                 intent: paypalOrder.intent,
+                amount,
+                currency,
                 links: paypalOrder.links?.map((link) => ({
                     rel: link.rel,
                     method: link.method,
@@ -60,6 +87,7 @@ app.post("/api/orders", async (_req, res) => {
         res.status(201).json({
             id: paypalOrder.id,
             localOrderId: localOrder.id,
+            amount,
         });
     } catch (error) {
         console.error("Create order failed:", error.message);

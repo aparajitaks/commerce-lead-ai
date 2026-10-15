@@ -24,9 +24,10 @@ async function getAccessToken() {
     return data.access_token;
 }
 
-export async function createPayPalOrder() {
+export async function createPayPalOrder(customAmount, customDescription) {
     const currency = process.env.PAYPAL_CURRENCY || "USD";
-    const amount = "10.00";
+    const amount = customAmount != null ? Number(customAmount).toFixed(2) : "10.00";
+    const description = customDescription || "Commerce Lead AI Purchase";
 
     const token = await getAccessToken();
 
@@ -45,7 +46,7 @@ export async function createPayPalOrder() {
                         currency_code: currency,
                         value: amount,
                     },
-                    description: "Commerce Lead AI Sandbox Demo",
+                    description,
                 },
             ],
         }),
