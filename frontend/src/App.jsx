@@ -4,6 +4,7 @@ import {
   PayPalButtons,
 } from "@paypal/react-paypal-js";
 import products from "./products";
+import AiAssistant from "./AiAssistant";
 import "./App.css";
 
 const API_URL = "http://localhost:3000";
@@ -16,6 +17,7 @@ const formatPrice = (price) =>
 
 function Store() {
   const [category, setCategory] = useState("All");
+  const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState([]);
   const [message, setMessage] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("idle");
@@ -25,10 +27,20 @@ function Store() {
     ...new Set(products.map((product) => product.category)),
   ];
 
-  const visibleProducts =
-    category === "All"
-      ? products
-      : products.filter((product) => product.category === category);
+  const visibleProducts = products.filter((product) => {
+    const query = searchQuery.trim().toLowerCase();
+
+    const matchesSearch =
+      !query ||
+      product.name.toLowerCase().includes(query) ||
+      product.category.toLowerCase().includes(query) ||
+      (product.description || "").toLowerCase().includes(query);
+
+    const matchesCategory =
+      category === "All" || product.category === category;
+
+    return matchesSearch && matchesCategory;
+  });
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -196,7 +208,42 @@ function Store() {
           ))}
         </div>
 
-        <div className="product-grid">
+        <div className="product-search">
+          <span aria-hidden="true">⌕</span>
+          <input
+            type="search"
+            placeholder="Search products, categories..."
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            aria-label="Search products"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              aria-label="Clear search"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {visibleProducts.length === 0 ? (
+          <div className="empty-search">
+            <p>No products found matching &ldquo;{searchQuery}&rdquo;</p>
+            <button
+              type="button"
+              className="clear-filters-btn"
+              onClick={() => {
+                setSearchQuery("");
+                setCategory("All");
+              }}
+            >
+              Reset filters
+            </button>
+          </div>
+        ) : (
+          <div className="product-grid">
           {visibleProducts.map((product) => (
             <article className="product-card" key={product.id}>
               <div className="product-art" aria-hidden="true">
@@ -220,6 +267,7 @@ function Store() {
             </article>
           ))}
         </div>
+        )}
       </section>
 
       <section className="cart-section" id="shopping-cart">
@@ -356,6 +404,8 @@ function Store() {
       <footer className="store-footer">
         Commerce Lead AI · Smart shopping, powered by PayPal Sandbox
       </footer>
+
+      <AiAssistant products={products} addToCart={addToCart} />
     </main>
   );
 }
