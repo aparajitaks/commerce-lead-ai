@@ -75,7 +75,33 @@ button {
   background: white;
   color: #182033;
   font-weight: 700;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
+
+.cart-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #635bff;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  animation: badgePop 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes badgePop {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
 
 .store-hero {
   max-width: 1120px;
@@ -155,7 +181,28 @@ button {
   border-radius: 18px;
   background: white;
   box-shadow: 0 8px 24px rgb(24 32 51 / 4%);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.22s ease;
+  cursor: default;
 }
+
+.product-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 40px rgb(24 32 51 / 10%);
+  border-color: #d4d7e8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-card {
+    transition: none;
+  }
+
+  .product-card:hover {
+    transform: none;
+  }
+}
+
 
 .product-art {
   display: grid;
@@ -278,11 +325,36 @@ button {
 }
 
 .store-footer {
-  padding: 26px 16px;
+  padding: 28px 24px;
+  border-top: 1px solid #e8eaf2;
+  background: #fff;
   color: #7a8294;
   font-size: 12px;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
+
+.store-footer strong {
+  color: #635bff;
+}
+
+.store-footer-tech {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.store-footer-tech span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 
 @media (max-width: 800px) {
   .product-grid {
@@ -486,6 +558,22 @@ button {
 
   .cart-summary strong {
     font-size: 19px;
+  }
+}
+
+/* ── Mobile: prevent AI launcher from colliding with page bottom ─── */
+@media (max-width: 520px) {
+  .ai-chat-launcher {
+    bottom: 16px;
+    right: 16px;
+    padding: 12px 18px;
+    font-size: 13px;
+  }
+
+  .ai-chat-drawer {
+    bottom: 76px;
+    right: 12px;
+    width: calc(100vw - 24px);
   }
 }
 
@@ -864,6 +952,14 @@ button {
 .ai-bundle-add-btn:active {
   transform: translateY(0);
 }
+
+.ai-bundle-add-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+}
+
 
 
 .ai-message-bubble.typing {

@@ -313,7 +313,12 @@ function Store() {
                 ?.scrollIntoView({ behavior: "smooth" })
             }
           >
-            🛒 Cart ({cartCount})
+            🛒 Cart
+            {cartCount > 0 && (
+              <span className="cart-badge" key={cartCount}>
+                {cartCount}
+              </span>
+            )}
           </button>
         </div>
       </header>
@@ -681,7 +686,14 @@ function Store() {
       )}
 
       <footer className="store-footer">
-        Commerce Lead AI · Smart shopping, powered by PayPal Sandbox
+        <span>
+          <strong>Commerce Lead AI</strong> — AI-powered shopping with real payments
+        </span>
+        <div className="store-footer-tech">
+          <span>✦ Groq AI recommendations</span>
+          <span>💳 PayPal Sandbox checkout</span>
+          <span>🗄️ Supabase persistence</span>
+        </div>
       </footer>
 
       <AiAssistant
