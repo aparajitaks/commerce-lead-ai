@@ -227,4 +227,74 @@ code {
   }
 }
 
+.ai-rec-explanation {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.ai-rec-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e9f4ff;
+  color: #185a96;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.ai-rec-reason {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.ai-budget-tracker {
+  margin: 12px 0 14px;
+}
+
+.ai-budget-labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  font-size: 12px;
+}
+
+.ai-budget-track {
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+
+.ai-budget-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #25855a;
+  transition: width 250ms ease;
+}
+
+.ai-budget-fill.over-budget {
+  background: #dc4444;
+}
+
+.ai-budget-remaining {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #25855a;
+}
+
+.ai-budget-remaining.over-budget {
+  color: #c62828;
+  font-weight: 700;
+}
+
 

@@ -78,6 +78,67 @@ function Store() {
     setPaymentStatus("idle");
   }
 
+  function addBundleToCart(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      setMessage("This bundle has no products to add.");
+      return;
+    }
+
+    // Consolidate duplicate product IDs within the bundle.
+    const bundleItems = new Map();
+
+    for (const product of items) {
+      if (!product?.id) continue;
+
+      const existing = bundleItems.get(product.id);
+
+      if (existing) {
+        existing.quantity += 1;
+      } else {
+        bundleItems.set(product.id, {
+          ...product,
+          quantity: 1,
+        });
+      }
+    }
+
+    const additions = [...bundleItems.values()];
+
+    if (additions.length === 0) {
+      setMessage("No valid products were found in this bundle.");
+      return;
+    }
+
+    // Merge the bundle into the current cart in one state update.
+    setCart((currentCart) => {
+      const updatedCart = currentCart.map((item) => ({ ...item }));
+
+      for (const product of additions) {
+        const existing = updatedCart.find(
+          (item) => item.id === product.id
+        );
+
+        if (existing) {
+          existing.quantity += product.quantity;
+        } else {
+          updatedCart.push(product);
+        }
+      }
+
+      return updatedCart;
+    });
+
+    const itemCount = additions.reduce(
+      (total, item) => total + item.quantity,
+      0
+    );
+
+    setMessage(
+      `Added complete ${itemCount}-item bundle to your cart.`
+    );
+    setPaymentStatus("idle");
+  }
+
   function changeQuantity(productId, change) {
     setCart((currentCart) =>
       currentCart
@@ -623,7 +684,11 @@ function Store() {
         Commerce Lead AI · Smart shopping, powered by PayPal Sandbox
       </footer>
 
-      <AiAssistant products={products} addToCart={addToCart} />
+      <AiAssistant
+        products={products}
+        addToCart={addToCart}
+        addBundleToCart={addBundleToCart}
+      />
     </main>
   );
 }

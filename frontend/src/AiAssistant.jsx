@@ -9,7 +9,11 @@ const SUGGESTED_PROMPTS = [
   "Gifts under $40",
 ];
 
-export default function AiAssistant({ products, addToCart }) {
+export default function AiAssistant({
+  products,
+  addToCart,
+  addBundleToCart,
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
     {
@@ -21,7 +25,24 @@ export default function AiAssistant({ products, addToCart }) {
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [addedBundleIds, setAddedBundleIds] = useState([]);
   const messagesEndRef = useRef(null);
+
+  function handleAddBundle(message) {
+    if (addedBundleIds.includes(message.id)) return;
+
+    addBundleToCart(message.recommendations);
+
+    setAddedBundleIds((current) =>
+      current.includes(message.id) ? current : [...current, message.id]
+    );
+
+    setTimeout(() => {
+      setAddedBundleIds((current) =>
+        current.filter((id) => id !== message.id)
+      );
+    }, 2000);
+  }
 
   useEffect(() => {
     if (isOpen) {
@@ -149,7 +170,10 @@ export default function AiAssistant({ products, addToCart }) {
                             <strong>{item.name}</strong>
                             <span>${Number(item.price).toFixed(2)}</span>
                             {item.reason && (
-                              <p className="ai-rec-reason">{item.reason}</p>
+                              <div className="ai-rec-explanation">
+                                <span className="ai-rec-badge">✦ Why this fits</span>
+                                <p className="ai-rec-reason">{item.reason}</p>
+                              </div>
                             )}
                           </div>
                           <button
@@ -168,17 +192,68 @@ export default function AiAssistant({ products, addToCart }) {
                             <span className="ai-bundle-label">Bundle Total</span>
                             <span className="ai-bundle-price">
                               ${m.bundleTotal.toFixed(2)}
-                              {m.budget !== null && (
-                                <span className="ai-bundle-budget"> / ${m.budget.toFixed(2)} budget</span>
+                              {m.budget !== null && m.budget > 0 && (
+                                <span className="ai-bundle-budget">
+                                  {" "}/ ${m.budget.toFixed(2)} budget
+                                </span>
                               )}
                             </span>
                           </div>
+
+                          {m.budget !== null && m.budget > 0 && (
+                            <div className="ai-budget-tracker">
+                              <div className="ai-budget-labels">
+                                <span>Budget used</span>
+                                <strong>
+                                  {Math.round((m.bundleTotal / m.budget) * 100)}%
+                                </strong>
+                              </div>
+
+                              <div
+                                className="ai-budget-track"
+                                role="progressbar"
+                                aria-label="Bundle budget used"
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={Math.min(
+                                  100,
+                                  Math.round((m.bundleTotal / m.budget) * 100)
+                                )}
+                              >
+                                <div
+                                  className={`ai-budget-fill ${
+                                    m.bundleTotal > m.budget ? "over-budget" : ""
+                                  }`}
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      (m.bundleTotal / m.budget) * 100
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+
+                              <p
+                                className={`ai-budget-remaining ${
+                                  m.bundleTotal > m.budget ? "over-budget" : ""
+                                }`}
+                              >
+                                {m.bundleTotal > m.budget
+                                  ? `$${(m.bundleTotal - m.budget).toFixed(2)} over budget`
+                                  : `$${(m.budget - m.bundleTotal).toFixed(2)} remaining`}
+                              </p>
+                            </div>
+                          )}
+
                           <button
                             type="button"
                             className="ai-bundle-add-btn"
-                            onClick={() => m.recommendations.forEach((item) => addToCart(item))}
+                            disabled={addedBundleIds.includes(m.id)}
+                            onClick={() => handleAddBundle(m)}
                           >
-                            🛒 Add Entire Bundle to Cart
+                            {addedBundleIds.includes(m.id)
+                              ? "✓ Bundle Added to Cart"
+                              : "🛒 Add Entire Bundle to Cart"}
                           </button>
                         </div>
                       )}
