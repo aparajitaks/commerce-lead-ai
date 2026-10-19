@@ -3,11 +3,12 @@ import { useState, useRef, useEffect } from "react";
 const API_URL = "http://localhost:3000";
 
 const SUGGESTED_PROMPTS = [
+  "Work-from-home setup under $120",
   "Desk setup under $60",
-  "Travel essentials",
   "Audio gear for focus",
   "Gifts under $40",
 ];
+
 
 export default function AiAssistant({
   products,
@@ -19,10 +20,11 @@ export default function AiAssistant({
     {
       id: "welcome",
       sender: "assistant",
-      text: "👋 Hi! I'm your Commerce AI Shopping Assistant. Tell me what you're looking for, your budget, or who you're shopping for!",
+      text: "👋 Hi! I'm Commerce AI — your smart shopping assistant powered by Groq.\n\nTell me what you need, your budget, or who you're shopping for, and I'll recommend the right products, explain why each one fits, and help you build the perfect bundle.",
       recommendations: [],
     },
   ]);
+
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [addedBundleIds, setAddedBundleIds] = useState([]);
@@ -273,6 +275,33 @@ export default function AiAssistant({
                 </div>
               </div>
             )}
+            {/* Demo capability teaser — visible only before first user message */}
+            {messages.length === 1 && (
+              <div className="ai-demo-teaser">
+                <p className="ai-demo-teaser-label">✦ What I can do</p>
+                <ul className="ai-demo-teaser-list">
+                  <li>🎯 Understand your budget and filter products to fit</li>
+                  <li>📦 Build multi-item bundles with explainable reasoning</li>
+                  <li>💳 Guide you to PayPal checkout in one click</li>
+                </ul>
+                <p className="ai-demo-teaser-hint">
+                  Try:{" "}
+                  <em
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleSend("Work-from-home setup under $120")}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        handleSend("Work-from-home setup under $120");
+                      }
+                    }}
+                  >
+                    "Work-from-home setup under $120"
+                  </em>
+                </p>
+              </div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -300,11 +329,12 @@ export default function AiAssistant({
           >
             <input
               type="text"
-              placeholder="Ask anything (e.g. 'Desk setup under $60')..."
+              placeholder="e.g. 'Work-from-home setup under $120'..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
               aria-label="Message to AI assistant"
             />
+
             <button type="submit" disabled={!input.trim() || isTyping}>
               Send
             </button>
