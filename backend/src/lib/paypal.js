@@ -74,7 +74,7 @@ export async function createPayPalOrder(customAmount, customDescription) {
     return data;
 }
 
-export async function capturePayPalOrder(orderId) {
+export async function capturePayPalOrder(orderId, requestId) {
     const token = await getAccessToken();
 
     const res = await fetch(
@@ -85,6 +85,7 @@ export async function capturePayPalOrder(orderId) {
                 Authorization: `Bearer ${token}`,
                 "Content-Type": "application/json",
                 Prefer: "return=representation",
+                "PayPal-Request-Id": requestId,
             },
         }
     );
@@ -98,6 +99,40 @@ export async function capturePayPalOrder(orderId) {
             detail
                 ? `${detail.issue}: ${detail.description}`
                 : data?.message || `PayPal capture error ${res.status}`
+        );
+    }
+
+    return data;
+}
+
+export async function getPayPalOrderDetails(orderId) {
+    const token = await getAccessToken();
+
+    const res = await fetch(
+        `${PAYPAL_API}/v2/checkout/orders/${encodeURIComponent(orderId)}`,
+        {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+        }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok) {
+        const detail = data?.details?.[0];
+
+        console.error("PayPal get order details failed:", {
+            status: res.status,
+            issue: detail?.issue,
+        });
+
+        throw new Error(
+            detail
+                ? `${detail.issue}: ${detail.description}`
+                : data?.message || `PayPal get order failed with HTTP ${res.status}`
         );
     }
 

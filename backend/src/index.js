@@ -8,6 +8,7 @@ import products from "./data/products.js";
 import {
     createPayPalOrder,
     capturePayPalOrder,
+    getPayPalOrderDetails,
 } from "./lib/paypal.js";
 
 const app = express();
@@ -23,34 +24,94 @@ app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", service: "Commerce Lead AI" });
 });
 
+// List completed orders for the hackathon demo.
+app.get("/api/orders", async (_req, res) => {
+    try {
+        const orders = await prisma.paymentOrder.findMany({
+            where: { status: "COMPLETED" },
+            orderBy: { createdAt: "desc" },
+            select: {
+                id: true,
+                amount: true,
+                currency: true,
+                description: true,
+                captureId: true,
+                paypalOrderId: true,
+                createdAt: true,
+            },
+            take: 100,
+        });
+
+        return res.json({ orders });
+    } catch (error) {
+        console.error("Order history lookup failed:", error.message);
+        return res.status(500).json({
+            error: "Unable to retrieve order history.",
+        });
+    }
+});
+
 // Create a local order and its corresponding PayPal order.
 app.post("/api/orders", async (req, res) => {
     try {
-        const { items } = req.body;
+        const { items } = req.body || {};
+
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({
+                error: "Invalid order request: 'items' must be a non-empty array.",
+            });
+        }
+
         const currency = process.env.PAYPAL_CURRENCY || "USD";
+        let totalCents = 0;
+        const itemSummaries = [];
 
-        let amount = "10.00";
-        let description = "Commerce Lead AI Sandbox Demo";
-
-        if (Array.isArray(items) && items.length > 0) {
-            let total = 0;
-            const itemSummaries = [];
-
-            for (const item of items) {
-                const product = products.find((p) => p.id === item.id);
-                if (!product) {
-                    return res.status(400).json({ error: `Unknown product ID: ${item.id}` });
-                }
-                const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
-                total += product.price * qty;
-                itemSummaries.push(`${qty}x ${product.name}`);
+        for (const item of items) {
+            if (
+                !item ||
+                typeof item !== "object" ||
+                Array.isArray(item) ||
+                typeof item.id !== "string" ||
+                !item.id.trim()
+            ) {
+                return res.status(400).json({
+                    error: "Each item must be an object with a valid product id and quantity.",
+                });
             }
 
-            amount = total.toFixed(2);
-            description = itemSummaries.join(", ");
-            if (description.length > 120) {
-                description = description.slice(0, 117) + "...";
+            const product = products.find((p) => p.id === item.id.trim());
+            if (!product) {
+                return res.status(400).json({
+                    error: `Unknown product ID: ${item.id}`,
+                });
             }
+
+            if (
+                typeof item.quantity !== "number" ||
+                !Number.isInteger(item.quantity) ||
+                item.quantity < 1 ||
+                item.quantity > 99
+            ) {
+                return res.status(400).json({
+                    error: `Invalid quantity for product '${product.name}'. Quantity must be an integer between 1 and 99.`,
+                });
+            }
+
+            const priceInCents = Math.round(Number(product.price) * 100);
+            totalCents += priceInCents * item.quantity;
+            itemSummaries.push(`${item.quantity}x ${product.name}`);
+        }
+
+        if (totalCents <= 0) {
+            return res.status(400).json({
+                error: "Order total must be greater than zero.",
+            });
+        }
+
+        const amount = (totalCents / 100).toFixed(2);
+        let description = itemSummaries.join(", ");
+        if (description.length > 120) {
+            description = description.slice(0, 117) + "...";
         }
 
         const localOrder = await prisma.paymentOrder.create({
@@ -62,7 +123,26 @@ app.post("/api/orders", async (req, res) => {
             },
         });
 
-        const paypalOrder = await createPayPalOrder(amount, description);
+        let paypalOrder;
+        try {
+            paypalOrder = await createPayPalOrder(amount, description);
+            if (!paypalOrder || !paypalOrder.id) {
+                throw new Error("PayPal did not return an order ID");
+            }
+        } catch (paypalError) {
+            console.error("PayPal order creation failed:", paypalError.message);
+            try {
+                await prisma.paymentOrder.update({
+                    where: { id: localOrder.id },
+                    data: { status: "FAILED" },
+                });
+            } catch (dbError) {
+                console.error("Failed to mark local order as FAILED:", dbError.message);
+            }
+            return res.status(502).json({
+                error: "Unable to create payment order with PayPal.",
+            });
+        }
 
         console.log(
             "PayPal order created:",
@@ -79,10 +159,6 @@ app.post("/api/orders", async (req, res) => {
                 })),
             }, null, 2)
         );
-
-        if (!paypalOrder.id) {
-            throw new Error("PayPal did not return an order ID");
-        }
 
         await prisma.paymentOrder.update({
             where: { id: localOrder.id },
@@ -117,6 +193,150 @@ app.post("/api/orders/:orderId/capture", async (req, res) => {
             return res.json({
                 status: "COMPLETED",
                 message: "Payment was already captured",
+                captureId: localOrder.captureId,
+                localOrderId: localOrder.id,
+                paypalOrderId: orderId,
+                amount: localOrder.amount ? localOrder.amount.toString() : undefined,
+                currency: localOrder.currency,
+            });
+        }
+
+        if (
+            localOrder.status === "PROCESSING" ||
+            localOrder.status === "APPROVED"
+        ) {
+            let paypalOrder;
+
+            try {
+                paypalOrder = await getPayPalOrderDetails(orderId);
+            } catch (error) {
+                console.error("PayPal reconciliation lookup failed:", error.message);
+
+                return res.status(502).json({
+                    error: "Unable to verify payment status with PayPal. Please retry later.",
+                });
+            }
+
+            if (paypalOrder.status === "COMPLETED") {
+                const purchaseUnits =
+                    paypalOrder.purchase_units || paypalOrder.purchaseUnits;
+
+                const capture = purchaseUnits?.[0]?.payments?.captures?.[0];
+
+                if (capture?.status !== "COMPLETED" || !capture.id) {
+                    return res.status(409).json({
+                        error: "PayPal reports a completed order, but verified capture details are unavailable.",
+                    });
+                }
+
+                const capturedAmount = capture.amount?.value;
+                const capturedCurrency = capture.amount?.currency_code;
+
+                const expectedAmount = Number(localOrder.amount).toFixed(2);
+                const actualAmount = Number(capturedAmount).toFixed(2);
+
+                if (
+                    capturedAmount == null ||
+                    !Number.isFinite(Number(capturedAmount)) ||
+                    actualAmount !== expectedAmount ||
+                    capturedCurrency !== localOrder.currency
+                ) {
+                    console.error("Reconciliation amount/currency mismatch", {
+                        localOrderId: localOrder.id,
+                        captureId: capture.id,
+                        expectedAmount,
+                        expectedCurrency: localOrder.currency,
+                        actualAmount: capturedAmount,
+                        actualCurrency: capturedCurrency,
+                    });
+
+                    return res.status(409).json({
+                        error: "PayPal capture does not match the expected order amount and currency.",
+                    });
+                }
+
+                const reconciled = await prisma.paymentOrder.updateMany({
+                    where: {
+                        id: localOrder.id,
+                        status: localOrder.status,
+                    },
+                    data: {
+                        status: "COMPLETED",
+                        captureId: capture.id,
+                    },
+                });
+
+                if (reconciled.count !== 1) {
+                    const latestOrder = await prisma.paymentOrder.findUnique({
+                        where: { id: localOrder.id },
+                    });
+
+                    if (latestOrder?.status === "COMPLETED") {
+                        return res.json({
+                            status: "COMPLETED",
+                            message: "Payment was already captured",
+                            captureId: latestOrder.captureId,
+                            localOrderId: latestOrder.id,
+                            paypalOrderId: orderId,
+                        });
+                    }
+
+                    return res.status(409).json({
+                        error: "Payment status changed during reconciliation. Check the order status.",
+                    });
+                }
+
+                return res.json({
+                    status: "COMPLETED",
+                    message: "Payment status reconciled with PayPal",
+                    captureId: capture.id,
+                    localOrderId: localOrder.id,
+                    paypalOrderId: orderId,
+                    amount: localOrder.amount ? localOrder.amount.toString() : undefined,
+                    currency: localOrder.currency,
+                });
+            }
+
+            if (paypalOrder.status === "VOIDED") {
+                const cancelled = await prisma.paymentOrder.updateMany({
+                    where: {
+                        id: localOrder.id,
+                        status: localOrder.status,
+                    },
+                    data: {
+                        status: "CANCELLED",
+                    },
+                });
+
+                if (cancelled.count !== 1) {
+                    const latestOrder = await prisma.paymentOrder.findUnique({
+                        where: { id: localOrder.id },
+                    });
+
+                    if (latestOrder?.status === "COMPLETED") {
+                        return res.json({
+                            status: "COMPLETED",
+                            message: "Payment was already captured",
+                            captureId: latestOrder.captureId,
+                            localOrderId: latestOrder.id,
+                            paypalOrderId: orderId,
+                        });
+                    }
+
+                    return res.status(409).json({
+                        error: "Order status changed during cancellation. Check the order status.",
+                    });
+                }
+
+                return res.status(409).json({
+                    status: "CANCELLED",
+                    error: "The PayPal order has been voided.",
+                });
+            }
+
+            return res.status(409).json({
+                status: paypalOrder.status,
+                error: "Payment is not confirmed as completed. Automatic recapture is disabled while the order is in recovery.",
             });
         }
 
@@ -126,7 +346,41 @@ app.post("/api/orders/:orderId/capture", async (req, res) => {
             });
         }
 
-        const result = await capturePayPalOrder(orderId);
+        // Atomically allow only one request to claim this pending order.
+        const claim = await prisma.paymentOrder.updateMany({
+            where: {
+                id: localOrder.id,
+                status: "PENDING",
+            },
+            data: {
+                status: "PROCESSING",
+                captureStartedAt: new Date(),
+            },
+        });
+
+        if (claim.count !== 1) {
+            const latestOrder = await prisma.paymentOrder.findUnique({
+                where: { id: localOrder.id },
+            });
+
+            if (latestOrder?.status === "COMPLETED") {
+                return res.json({
+                    status: "COMPLETED",
+                    message: "Payment was already captured",
+                    captureId: latestOrder.captureId,
+                    localOrderId: latestOrder.id,
+                    paypalOrderId: orderId,
+                    amount: latestOrder.amount ? latestOrder.amount.toString() : undefined,
+                    currency: latestOrder.currency,
+                });
+            }
+
+            return res.status(409).json({
+                error: "Another request is processing this payment. Please check its status before retrying.",
+            });
+        }
+
+        const result = await capturePayPalOrder(orderId, localOrder.id);
 
         if (result.status !== "COMPLETED") {
             return res.status(409).json({
@@ -144,18 +398,61 @@ app.post("/api/orders/:orderId/capture", async (req, res) => {
             });
         }
 
-        await prisma.paymentOrder.update({
-            where: { id: localOrder.id },
+        // Verify the actual captured amount and currency before marking the
+        // local order as completed.
+        const capturedAmount = capture.amount?.value;
+        const capturedCurrency = capture.amount?.currency_code;
+
+        const expectedAmount = Number(localOrder.amount).toFixed(2);
+        const actualAmount = Number(capturedAmount).toFixed(2);
+
+        if (
+            capturedAmount == null ||
+            !Number.isFinite(Number(capturedAmount)) ||
+            actualAmount !== expectedAmount ||
+            capturedCurrency !== localOrder.currency
+        ) {
+            console.error("PayPal capture amount/currency mismatch", {
+                localOrderId: localOrder.id,
+                expectedAmount,
+                expectedCurrency: localOrder.currency,
+                actualAmount: capturedAmount,
+                actualCurrency: capturedCurrency,
+            });
+
+            return res.status(409).json({
+                error: "Captured payment amount or currency does not match the order.",
+            });
+        }
+
+        const completed = await prisma.paymentOrder.updateMany({
+            where: {
+                id: localOrder.id,
+                status: "PROCESSING",
+            },
             data: {
                 status: "COMPLETED",
                 captureId: capture.id,
             },
         });
 
+        if (completed.count !== 1) {
+            console.error("Capture succeeded but local completion update needs reconciliation", {
+                localOrderId: localOrder.id,
+                captureId: capture.id,
+            });
+
+            return res.status(409).json({
+                error: "Payment may have succeeded. Please check the order status before retrying.",
+            });
+        }
+
         res.json({
             localOrderId: localOrder.id,
             paypalOrderId: orderId,
             captureId: capture.id,
+            amount: localOrder.amount ? localOrder.amount.toString() : undefined,
+            currency: localOrder.currency,
             status: "COMPLETED",
         });
     } catch (error) {
@@ -168,6 +465,7 @@ app.post("/api/orders/:orderId/capture", async (req, res) => {
 app.post("/api/ai/recommend", async (req, res) => {
     try {
         const message = req.body?.message;
+        const rawHistory = req.body?.history;
 
         if (typeof message !== "string" || !message.trim()) {
             return res.status(400).json({
@@ -179,6 +477,36 @@ app.post("/api/ai/recommend", async (req, res) => {
             return res.status(400).json({
                 error: "Please keep your request under 1000 characters.",
             });
+        }
+
+        // Validate and sanitise conversation history.
+        // Each entry must be { role: "user"|"assistant", text: string }.
+        // We cap the array at 10 turns and trim individual messages to 500 chars
+        // so context never inflates the token count significantly.
+        const MAX_HISTORY_TURNS = 10;
+        const MAX_TURN_LENGTH = 500;
+
+        const priorMessages = [];
+
+        if (Array.isArray(rawHistory)) {
+            const validRoles = new Set(["user", "assistant"]);
+            const kept = rawHistory.slice(-MAX_HISTORY_TURNS);
+
+            for (const entry of kept) {
+                if (
+                    entry &&
+                    typeof entry === "object" &&
+                    !Array.isArray(entry) &&
+                    validRoles.has(entry.role) &&
+                    typeof entry.text === "string" &&
+                    entry.text.trim().length > 0
+                ) {
+                    priorMessages.push({
+                        role: entry.role,
+                        content: entry.text.trim().slice(0, MAX_TURN_LENGTH),
+                    });
+                }
+            }
         }
 
         if (!process.env.GROQ_API_KEY) {
@@ -216,21 +544,43 @@ If the shopper's request contains words like "bundle", "combo", "setup", "comple
 For bundle requests, recommend 2-4 complementary products that work well together and collectively
 fit within any mentioned budget.
 
+CONVERSATION CONTEXT:
+You may receive prior conversation turns before this message. Use them to understand follow-up
+questions such as "show me something cheaper", "what about for travel?", or "add the bottle to
+that setup". Maintain continuity across turns.
+Never carry over product prices or IDs from history — always resolve products from the current
+catalog supplied above, not from prior assistant messages.
+
 Return only valid JSON in this format:
 {
-  "message": "A brief, helpful response",
-  "recommendations": ["product-id-1", "product-id-2"],
+  "message": "A brief, helpful response tailored to the shopper's request",
+  "recommendations": [
+    {
+      "id": "headphones-001",
+      "reason": "A concise explanation of why this product fits the shopper's stated needs"
+    }
+  ],
   "isBundle": false
 }
 
-Set "isBundle" to true only for bundle/combo/setup requests; false otherwise.
-The recommendations field must contain only catalog product IDs.
-Recommend at most 4 products for bundles, at most 3 for regular requests.
+Rules for recommendations:
+- Each recommendation must be an object containing "id" and "reason".
+- The "id" must exactly match a product ID in the catalog.
+- Explain relevance using only the shopper's request and the supplied catalog.
+- Never claim unsupported features, compatibility, discounts, stock, or performance.
+- Keep each reason to one concise sentence.
+- Recommend at most 3 products for regular requests and at most 4 for bundles.
+- Return an empty recommendations array if no catalog product is relevant.
+- Set "isBundle" to true only for bundle, combo, setup, or multiple-item requests.
+- Never invent prices; the backend will supply all displayed prices.
 
 Catalog:
 ${JSON.stringify(catalog, null, 2)}
                     `,
                 },
+                // Inject prior conversation turns between the system prompt
+                // and the current user message so the model has full context.
+                ...priorMessages,
                 {
                     role: "user",
                     content: message.trim(),
@@ -265,24 +615,70 @@ ${JSON.stringify(catalog, null, 2)}
         const budget = budgetMatch ? parseFloat(budgetMatch[1]) : null;
 
         const maxItems = isBundle ? 4 : 3;
-        const requestedIds = Array.isArray(parsed.recommendations)
+
+        const requestedRecommendations = Array.isArray(parsed.recommendations)
             ? parsed.recommendations.slice(0, maxItems)
             : [];
 
-        // Resolve IDs against the trusted server-side catalog
-        let recommendedProducts = requestedIds
-            .map((id) => products.find((product) => product.id === id))
-            .filter(Boolean)
-            .map((product) => ({
-                ...product,
-                price: Number(product.price),
-            }));
+        let recommendedProducts = requestedRecommendations
+            .map((recommendation) => {
+                // Accept legacy string IDs as well as the new object format.
+                const id =
+                    typeof recommendation === "string"
+                        ? recommendation
+                        : recommendation &&
+                            typeof recommendation === "object" &&
+                            !Array.isArray(recommendation)
+                          ? recommendation.id
+                          : null;
 
-        // For bundle requests with a known budget, trim products until total fits
+                if (typeof id !== "string") {
+                    return null;
+                }
+
+                // Resolve every recommendation against the trusted catalog.
+                const product = products.find((item) => item.id === id);
+
+                if (!product) {
+                    return null;
+                }
+
+                const rawReason =
+                    recommendation &&
+                    typeof recommendation === "object" &&
+                    !Array.isArray(recommendation) &&
+                    typeof recommendation.reason === "string"
+                        ? recommendation.reason.trim()
+                        : "";
+
+                return {
+                    ...product,
+                    price: Number(product.price),
+                    reason: rawReason
+                        ? rawReason.slice(0, 180)
+                        : "Suggested from our catalog for your shopping request.",
+                };
+            })
+            .filter(Boolean);
+
+        // ── Layer 1: individual price cap ─────────────────────────────────────
+        // When a budget is stated, remove any product whose price alone exceeds
+        // it. This applies to both regular and bundle requests, and runs before
+        // the bundle total-cap so the greedy pass only sees affordable items.
+        if (budget !== null) {
+            recommendedProducts = recommendedProducts.filter(
+                (p) => p.price <= budget
+            );
+        }
+
+        // ── Layer 2: bundle total cap ──────────────────────────────────────────
+        // For bundle requests with a known budget, greedily trim products until
+        // the running total fits within the budget (cheapest first to maximise
+        // the number of items kept). The original AI-suggested order is restored
+        // for the final result.
         let bundleTotal = null;
         if (isBundle && recommendedProducts.length > 0) {
             if (budget !== null) {
-                // Greedily keep products within budget (cheapest first to maximise item count)
                 const sorted = [...recommendedProducts].sort((a, b) => a.price - b.price);
                 let running = 0;
                 const kept = [];
@@ -300,11 +696,24 @@ ${JSON.stringify(catalog, null, 2)}
             bundleTotal = recommendedProducts.reduce((sum, p) => sum + p.price, 0);
         }
 
+        // ── Layer 3: empty-result message ──────────────────────────────────────
+        // When every candidate was removed by the budget filter, replace the
+        // AI-generated message with a clear, honest explanation so the frontend
+        // always has useful text to display rather than an empty list with a
+        // misleading success message.
+        let responseMessage =
+            typeof parsed.message === "string"
+                ? parsed.message
+                : "Here are a few products you might like.";
+
+        if (recommendedProducts.length === 0 && budget !== null) {
+            responseMessage = `Sorry, none of our current products fit within your $${budget.toFixed(2)} budget. Try raising your budget or browsing the full catalog.`;
+        } else if (recommendedProducts.length === 0) {
+            responseMessage = "I couldn't find a matching product in our catalog for that request. Try a different description or browse all products.";
+        }
+
         return res.json({
-            message:
-                typeof parsed.message === "string"
-                    ? parsed.message
-                    : "Here are a few products you might like.",
+            message: responseMessage,
             recommendations: recommendedProducts,
             isBundle,
             ...(bundleTotal !== null && { bundleTotal: parseFloat(bundleTotal.toFixed(2)) }),
@@ -319,8 +728,18 @@ ${JSON.stringify(catalog, null, 2)}
     }
 });
 
-const port = process.env.PORT || 3000;
+import { fileURLToPath } from "node:url";
 
-app.listen(port, () => {
-    console.log(`Commerce Lead AI API running on http://localhost:${port}`);
-});
+const isMainModule =
+    process.argv[1] &&
+    fileURLToPath(import.meta.url) === fileURLToPath(new URL(`file://${process.argv[1]}`));
+
+if (isMainModule) {
+    const port = process.env.PORT || 3000;
+
+    app.listen(port, () => {
+        console.log(`Commerce Lead AI API running on http://localhost:${port}`);
+    });
+}
+
+export { app };

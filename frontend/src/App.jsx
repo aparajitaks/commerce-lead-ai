@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   PayPalScriptProvider,
   PayPalButtons,
@@ -21,6 +21,14 @@ function Store() {
   const [cart, setCart] = useState([]);
   const [message, setMessage] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("idle");
+  const captureInFlight = useRef(false);
+
+  const [receipt, setReceipt] = useState(null);
+  const [showOrderHistory, setShowOrderHistory] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState("");
+  const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
 
   const categories = [
     "All",
@@ -130,6 +138,10 @@ function Store() {
   }
 
   async function capturePayment(data) {
+    // Guard against duplicate invocations from the PayPal SDK.
+    if (captureInFlight.current) return;
+    captureInFlight.current = true;
+
     setMessage("Verifying your payment with PayPal...");
     setPaymentStatus("processing");
 
@@ -147,13 +159,72 @@ function Store() {
         );
       }
 
+      // Save verified receipt details before clearing the cart.
+      setReceipt({
+        amount: Number(result.amount) || cartTotal,
+        currency: result.currency || "USD",
+        items: cart.map((item) => ({ ...item })),
+        localOrderId: result.localOrderId,
+        paypalOrderId: result.paypalOrderId || data.orderID,
+        captureId: result.captureId,
+      });
+
+      setCart([]);
       setPaymentStatus("success");
       setMessage("Payment completed successfully!");
     } catch (error) {
       setPaymentStatus("error");
       setMessage(error.message || "Payment verification failed.");
+    } finally {
+      captureInFlight.current = false;
     }
   }
+
+  useEffect(() => {
+    if (!showOrderHistory) return;
+
+    let cancelled = false;
+
+    async function loadOrders() {
+      setOrdersLoading(true);
+      setOrdersError("");
+
+      try {
+        const response = await fetch(`${API_URL}/api/orders`);
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Unable to load your order history."
+          );
+        }
+
+        if (!Array.isArray(result.orders)) {
+          throw new Error("The server returned an unexpected response.");
+        }
+
+        if (!cancelled) {
+          setOrders(result.orders);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setOrdersError(
+            error.message || "Unable to load your order history."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setOrdersLoading(false);
+        }
+      }
+    }
+
+    loadOrders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showOrderHistory, ordersRefreshKey]);
 
   return (
     <main className="store-page">
@@ -164,6 +235,15 @@ function Store() {
 
         <div className="store-nav-right">
           <span className="sandbox-tag">SANDBOX MODE</span>
+          <button
+            className="history-button"
+            onClick={() => {
+              setShowOrderHistory((visible) => !visible);
+              setReceipt(null);
+            }}
+          >
+            {showOrderHistory ? "Hide Orders" : "Order History"}
+          </button>
           <button
             className="cart-button"
             onClick={() =>
@@ -400,6 +480,142 @@ function Store() {
           )}
         </div>
       </section>
+
+      {receipt && (
+        <section className="receipt-card" aria-labelledby="receipt-title">
+          <p className="eyebrow">PAYMENT CONFIRMED</p>
+          <h2 id="receipt-title">Thank you for your order!</h2>
+          <p>Your PayPal Sandbox payment was completed successfully.</p>
+
+          <div className="receipt-row">
+            <span>Order total</span>
+            <strong>
+              {formatPrice(receipt.amount)}
+            </strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Payment currency</span>
+            <strong>{receipt.currency}</strong>
+          </div>
+
+          <h3>Items purchased</h3>
+          <ul>
+            {receipt.items.map((item) => (
+              <li key={item.id}>
+                {item.name} × {item.quantity}
+              </li>
+            ))}
+          </ul>
+
+          {receipt.localOrderId && (
+            <p className="receipt-reference">
+              Commerce Lead AI order ID: {receipt.localOrderId}
+            </p>
+          )}
+
+          <p className="receipt-reference">
+            PayPal order ID: {receipt.paypalOrderId}
+          </p>
+
+          {receipt.captureId && (
+            <p className="receipt-reference">
+              PayPal capture ID: {receipt.captureId}
+            </p>
+          )}
+
+          <button
+            className="history-button"
+            onClick={() => {
+              setReceipt(null);
+              setShowOrderHistory(true);
+            }}
+          >
+            View Order History
+          </button>
+        </section>
+      )}
+
+      {showOrderHistory && (
+        <section className="order-history" id="order-history">
+          <div className="history-heading">
+            <div>
+              <p className="eyebrow">YOUR PURCHASES</p>
+              <h2>Order History</h2>
+              <p>Review your completed Commerce Lead AI purchases.</p>
+            </div>
+
+            <button
+              className="history-button"
+              onClick={() => setOrdersRefreshKey((key) => key + 1)}
+              disabled={ordersLoading}
+            >
+              {ordersLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+
+          {ordersLoading && (
+            <p role="status" aria-live="polite">Loading completed orders...</p>
+          )}
+
+          {!ordersLoading && ordersError && (
+            <div role="alert" className="history-error">
+              <p>{ordersError}</p>
+              <button
+                className="history-button"
+                onClick={() => setOrdersRefreshKey((key) => key + 1)}
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {!ordersLoading && !ordersError && orders.length === 0 && (
+            <div className="history-empty">
+              <h3>No completed orders yet</h3>
+              <p>Your successful purchases will appear here.</p>
+            </div>
+          )}
+
+          {!ordersLoading && !ordersError && orders.length > 0 && (
+            <div className="order-list">
+              {orders.map((order) => (
+                <article className="order-card" key={order.id}>
+                  <div className="order-card-heading">
+                    <div>
+                      <h3>Order #{order.id.slice(-8)}</h3>
+                      <p className="order-date">
+                        {new Date(order.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <strong className="order-amount">
+                      {new Intl.NumberFormat("en-US", {
+                        style: "currency",
+                        currency: order.currency || "USD",
+                      }).format(Number(order.amount))}
+                    </strong>
+                  </div>
+
+                  <p className="order-description">
+                    {order.description || "Commerce Lead AI purchase"}
+                  </p>
+
+                  {order.captureId && (
+                    <p className="receipt-reference">
+                      PayPal capture ID: {order.captureId}
+                    </p>
+                  )}
+
+                  <p className="receipt-reference">
+                    PayPal order ID: {order.paypalOrderId || "Unavailable"}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <footer className="store-footer">
         Commerce Lead AI · Smart shopping, powered by PayPal Sandbox

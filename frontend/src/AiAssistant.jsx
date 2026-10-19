@@ -33,6 +33,19 @@ export default function AiAssistant({ products, addToCart }) {
     const query = (userText || input).trim();
     if (!query || isTyping) return;
 
+    // Snapshot the current history BEFORE adding the new user message so we
+    // don't include the message we're about to send in the context array.
+    // We keep only the last 10 turns (5 pairs) to stay within token limits,
+    // and send only role + text — never product objects or prices.
+    const MAX_HISTORY_TURNS = 10;
+    const history = messages
+      .filter((m) => m.sender === "user" || m.sender === "assistant")
+      .slice(-MAX_HISTORY_TURNS)
+      .map((m) => ({
+        role: m.sender === "user" ? "user" : "assistant",
+        text: m.text,
+      }));
+
     const userMessage = {
       id: "u-" + Date.now(),
       sender: "user",
@@ -49,7 +62,7 @@ export default function AiAssistant({ products, addToCart }) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ message: query }),
+        body: JSON.stringify({ message: query, history }),
       });
 
       const data = await response.json();
@@ -135,6 +148,9 @@ export default function AiAssistant({ products, addToCart }) {
                           <div className="ai-rec-info">
                             <strong>{item.name}</strong>
                             <span>${Number(item.price).toFixed(2)}</span>
+                            {item.reason && (
+                              <p className="ai-rec-reason">{item.reason}</p>
+                            )}
                           </div>
                           <button
                             type="button"

@@ -109,3 +109,122 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+.receipt-card,
+.order-history {
+  width: min(900px, calc(100% - 32px));
+  margin: 32px auto;
+  padding: 24px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #1e293b;
+  box-sizing: border-box;
+}
+
+.receipt-card h2,
+.order-history h2 {
+  margin-top: 8px;
+}
+
+.receipt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.receipt-reference {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.history-button {
+  padding: 10px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.history-button:hover {
+  background: #e2e8f0;
+}
+
+.receipt-card li {
+  margin: 8px 0;
+}
+
+.history-heading,
+.order-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.history-heading {
+  margin-bottom: 24px;
+}
+
+.history-heading h2 {
+  margin-bottom: 8px;
+}
+
+.order-list {
+  display: grid;
+  gap: 16px;
+}
+
+.order-card {
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.order-card h3 {
+  margin: 0 0 6px;
+}
+
+.order-date,
+.order-description {
+  color: #475569;
+}
+
+.order-date {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.order-amount {
+  white-space: nowrap;
+  font-size: 1.1rem;
+}
+
+.order-description {
+  margin: 16px 0 10px;
+}
+
+.history-empty,
+.history-error {
+  padding: 20px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.history-error {
+  border: 1px solid #fecaca;
+}
+
+@media (max-width: 560px) {
+  .history-heading,
+  .order-card-heading {
+    flex-direction: column;
+  }
+}
+
+
