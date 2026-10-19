@@ -728,6 +728,39 @@ ${JSON.stringify(catalog, null, 2)}
     }
 });
 
+/**
+ * Return a consistent JSON response for unknown routes.
+ * Register after all API routes.
+ */
+app.use((req, res) => {
+    return res.status(404).json({
+        error: "Route not found.",
+        path: req.originalUrl,
+    });
+});
+
+/**
+ * Handle malformed JSON and unexpected Express errors.
+ * Must have four parameters to be recognized as error middleware.
+ */
+app.use((err, req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+        return res.status(400).json({
+            error: "Invalid JSON request body.",
+        });
+    }
+
+    console.error("Unhandled API error:", err.message);
+
+    return res.status(500).json({
+        error: "Internal server error.",
+    });
+});
+
 import { fileURLToPath } from "node:url";
 
 const isMainModule =

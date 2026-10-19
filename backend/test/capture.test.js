@@ -9,14 +9,22 @@ test("payment capture route recovery checks", async (t) => {
         paypalOrder: null,
         captureCalls: 0,
         updateManyCalls: [],
+        updateManyCount: 1,
+        latestOrder: null,
     };
 
     const prisma = {
         paymentOrder: {
-            findUnique: async () => state.order,
+            findUnique: async (args) => {
+                if (args?.where?.id && state.latestOrder) {
+                    return state.latestOrder;
+                }
+
+                return state.order;
+            },
             updateMany: async (args) => {
                 state.updateManyCalls.push(args);
-                return { count: 1 };
+                return { count: state.updateManyCount };
             },
         },
     };
@@ -142,5 +150,158 @@ test("payment capture route recovery checks", async (t) => {
 
         assert.equal(response.status, 502);
         assert.equal(state.captureCalls, 0);
+    });
+
+    await t.test("PROCESSING order reconciles a matching completed PayPal capture", async () => {
+        state.order = {
+            id: "local-reconcile-1",
+            paypalOrderId: "PAYPAL_RECONCILE_1",
+            status: "PROCESSING",
+            amount: "49.99",
+            currency: "USD",
+        };
+        state.paypalLookupError = null;
+        state.paypalOrder = {
+            status: "COMPLETED",
+            purchase_units: [{
+                payments: {
+                    captures: [{
+                        id: "CAPTURE_RECONCILE_1",
+                        status: "COMPLETED",
+                        amount: { value: "49.99", currency_code: "USD" },
+                    }],
+                },
+            }],
+        };
+        state.captureCalls = 0;
+        state.updateManyCalls = [];
+        state.updateManyCount = 1;
+
+        const response = await fetch(
+            `${baseUrl}/api/orders/PAYPAL_RECONCILE_1/capture`,
+            { method: "POST" },
+        );
+
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        assert.equal(body.status, "COMPLETED");
+        assert.equal(body.captureId, "CAPTURE_RECONCILE_1");
+        assert.equal(body.amount, "49.99");
+        assert.equal(body.currency, "USD");
+        assert.equal(state.captureCalls, 0);
+        assert.equal(state.updateManyCalls.length, 1);
+        assert.equal(state.updateManyCalls[0].data.status, "COMPLETED");
+    });
+
+    await t.test("PROCESSING order is cancelled when PayPal reports VOIDED", async () => {
+        state.order = {
+            id: "local-voided-1",
+            paypalOrderId: "PAYPAL_VOIDED_1",
+            status: "PROCESSING",
+            amount: "49.99",
+            currency: "USD",
+        };
+        state.paypalLookupError = null;
+        state.paypalOrder = { status: "VOIDED" };
+        state.captureCalls = 0;
+        state.updateManyCalls = [];
+        state.updateManyCount = 1;
+
+        const response = await fetch(
+            `${baseUrl}/api/orders/PAYPAL_VOIDED_1/capture`,
+            { method: "POST" },
+        );
+
+        assert.equal(response.status, 409);
+        const body = await response.json();
+        assert.equal(body.status, "CANCELLED");
+        assert.equal(state.captureCalls, 0);
+        assert.equal(state.updateManyCalls.length, 1);
+        assert.equal(state.updateManyCalls[0].data.status, "CANCELLED");
+    });
+
+    await t.test("reconciliation rejects a capture with mismatched amount", async () => {
+        state.order = {
+            id: "local-mismatch-1",
+            paypalOrderId: "PAYPAL_MISMATCH_1",
+            status: "PROCESSING",
+            amount: "49.99",
+            currency: "USD",
+        };
+        state.paypalLookupError = null;
+        state.paypalOrder = {
+            status: "COMPLETED",
+            purchase_units: [{
+                payments: {
+                    captures: [{
+                        id: "CAPTURE_MISMATCH_1",
+                        status: "COMPLETED",
+                        amount: { value: "39.99", currency_code: "USD" },
+                    }],
+                },
+            }],
+        };
+        state.captureCalls = 0;
+        state.updateManyCalls = [];
+
+        const response = await fetch(
+            `${baseUrl}/api/orders/PAYPAL_MISMATCH_1/capture`,
+            { method: "POST" },
+        );
+
+        assert.equal(response.status, 409);
+        assert.match(
+            (await response.json()).error,
+            /does not match the expected order amount and currency/,
+        );
+        assert.equal(state.updateManyCalls.length, 0);
+        assert.equal(state.captureCalls, 0);
+    });
+
+    await t.test("concurrent reconciliation change does not falsely report success", async () => {
+        state.order = {
+            id: "local-race-1",
+            paypalOrderId: "PAYPAL_RACE_1",
+            status: "PROCESSING",
+            amount: "49.99",
+            currency: "USD",
+        };
+        state.latestOrder = {
+            id: "local-race-1",
+            paypalOrderId: "PAYPAL_RACE_1",
+            status: "FAILED",
+            amount: "49.99",
+            currency: "USD",
+        };
+        state.paypalLookupError = null;
+        state.paypalOrder = {
+            status: "COMPLETED",
+            purchase_units: [{
+                payments: {
+                    captures: [{
+                        id: "CAPTURE_RACE_1",
+                        status: "COMPLETED",
+                        amount: { value: "49.99", currency_code: "USD" },
+                    }],
+                },
+            }],
+        };
+        state.captureCalls = 0;
+        state.updateManyCalls = [];
+        state.updateManyCount = 0;
+
+        const response = await fetch(
+            `${baseUrl}/api/orders/PAYPAL_RACE_1/capture`,
+            { method: "POST" },
+        );
+
+        assert.equal(response.status, 409);
+        assert.match(
+            (await response.json()).error,
+            /status changed during reconciliation/,
+        );
+        assert.equal(state.captureCalls, 0);
+
+        state.latestOrder = null;
     });
 });
