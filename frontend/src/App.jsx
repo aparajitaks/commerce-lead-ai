@@ -540,9 +540,11 @@ function Store() {
         <section className="order-history" id="order-history">
           <div className="history-heading">
             <div>
-              <p className="eyebrow">YOUR PURCHASES</p>
+              <p className="eyebrow">STORE TEST TRANSACTIONS</p>
               <h2>Order History</h2>
-              <p>Review your completed Commerce Lead AI purchases.</p>
+              <p>
+                Sandbox demo: displays completed store test transactions, which may include purchases from other demo sessions. Production order history must be restricted to the authenticated customer.
+              </p>
             </div>
 
             <button
